@@ -10,22 +10,23 @@ from numpy import sqrt, mean, ndarray, matrix
 from typing import Tuple, List, Union
 
 
-def plot_all_nodes(markersize=25, show=False):
+def global_plot_all_nodes(markersize=25, show=False):
+    """ Plots all instances of class Node defined in the global scope """
     if not Node.instances:
         print('Warning: no instance of Node found')
         return
     for node in Node.instances:
         plt.plot(*node.get_location(), '.', markersize=markersize, c='k')
         x, y = node.get_location()
-        x_offset, y_offset = (0.0, 0.0)  # offsets
-        plt.text(x + x_offset, y + y_offset, s=node.id, c='w', ha='center', va='center')
+
+        plt.text(x, y, s=node.id, c='w', ha='center', va='center')
     if show:
         plt.show()
 
 
 class Material:
     def __init__(self, name: str, electrical_conductivity: float, thermal_conductivity: float, permittivity: float = 1,
-                 rgb: Tuple[float,float,float] = (1, 1, 1)):
+                 rgb: Tuple[float, float, float] = (1, 1, 1)):
         self.name = name
         self.cond_elect = electrical_conductivity  # Siemens
         self.cond_therm = thermal_conductivity
@@ -38,6 +39,7 @@ class Material:
         return f"""{self.name}:
         Electrical Conductivity: {self.cond_elect} [Siemens]
         Thermal Conductivity: {self.cond_therm} [UNIT]"""
+
     pass
 
 
@@ -45,14 +47,10 @@ copper = Material('Copper', 1e7, 10, 1000, rgb=(1., 128 / 255, 0.))
 air = Material('Air', 1e-9, 1, 1, rgb=(206 / 255, 1., 1.))
 
 
-# class Element:  # stub
-#     pass
-
-
 class Node:
-    instances = []
+    instances = []  # to keep track of all instances
     count = 0  # counts the instances
-    id_dict = {}
+    id_dict = {}  # {obj:obj.id for obj in instances}
 
     @classmethod
     def inc(cls):
@@ -64,19 +62,20 @@ class Node:
         cls.id_dict.update(dictionary)
 
     @classmethod
-    def get_node(cls, id):
+    def get_node(cls, instance_id):
         """ Returns Node object whose id is given """
-        # ref = {obj:obj.id for obj in instances}
-        return cls.id_dict[id]
+        return cls.id_dict[instance_id]
 
-    def __init__(self, x: int, y: int, init_temp=0, init_potential=0, lock_temp=False, lock_potent=False):
+    def __init__(self, x: Union[int, float], y: Union[int, float],
+                 init_temp: Union[int, float] = 0, init_potential: Union[int, float] = 0,
+                 lock_temp: bool = False, lock_potent: bool = False):
         self.x = x
         self.y = y
         self.temperature = init_temp
         self.potential = init_potential
         self.temperature_locked = lock_temp
         self.potential_locked = lock_potent
-        self.neighbors = {'North': None, 'South': None, 'East': None, 'West': None}
+
         self.in_elements = []  # stores the elements of which this node is part of
         self.instances.append(self)
         self.id = self.count
@@ -92,14 +91,8 @@ class Node:
         self.in_elements.append(element)
 
     def __repr__(self):
-        return f"\nNode {self.id} at {self.get_location()}. Temp: {self.get_temperature()} K. Potential: {self.potential}V"
-
-    def set_neighbor(self, **kwargs):
-        for kw in kwargs:
-            if kw in self.neighbors.keys():
-                self.neighbors.update(kwargs)
-            else:
-                raise KeyError(f'Unknown key. Try any of these: {self.neighbors.keys().__str__()[10:-1]}')
+        return f"\nNode {self.id} at {self.get_location()}. " \
+               f"Temp: {self.get_temperature()} K. Potential: {self.potential}V"
 
     def get_location(self):
         return self.x, self.y
@@ -119,7 +112,7 @@ class Node:
     def lock_potential(self, arg: bool):
         self.potential_locked = arg
 
-    def isNode(self, obj, type_error=True):
+    def is_node(self, obj, type_error=True):
         """ Checks whether obj is an instanceof this class """
         if isinstance(obj, self.__class__):
             return True
@@ -132,8 +125,8 @@ class Node:
 
 
 class Element:
-    instances = []
-    id_dict = {}  # dictionary of id
+    instances = []  # to keep track of all instances
+    id_dict = {}  # {obj:obj.id for obj in instances}
     count = 0  # counts the instances
 
     @classmethod
@@ -142,25 +135,27 @@ class Element:
         cls.count += 1
 
     @classmethod
-    def get_element(cls, id):
+    def get_element(cls, instance_id):
         """ Returns Element object whose id is given """
         # ref = {obj:obj.id for obj in instances}
-        return cls.id_dict[id]
+        return cls.id_dict[instance_id]
 
-    def __init__(self, nodes: Tuple['Node'], material: Material, ρ: float = 0):
+    def __init__(self, nodes: Tuple[Node, Node, Node], material: Material, charge_density: float = 0):
         """
         Creates a triangular element
         :param nodes: Tuple['Node']
         :param material: Material
         """
-        if not isinstance(nodes, (tuple, list, ndarray)): raise TypeError('Parameter nodes must be a tuple of 3 nodes')
+        if not isinstance(nodes, (tuple, list, ndarray)):
+            raise TypeError('Parameter nodes must be a tuple of 3 nodes')
         for node in nodes:
             if not isinstance(node, Node):
                 raise TypeError(f'Object {node} is not instance of {Node}')
         self.nodes = tuple(nodes)
-        if len(self.nodes) != 3: raise ValueError("An element must be triangular (exactly 3 nodes)")
-        self.ρ = ρ  # volumetric charge density
-        self.Δ = self.get_area()  # area of the element (triangular)
+        if len(self.nodes) != 3:
+            raise ValueError("An element must be triangular (exactly 3 nodes)")
+        self.charge_density = charge_density  # volumetric charge density
+        self.area = self.get_area()  # area of the element (triangular)
 
         self.assign_nodes_to_element()
         self.material = material
@@ -171,10 +166,10 @@ class Element:
         pass
 
     def __repr__(self) -> str:
-        return f"Element {self.id} with nodes {[node.id for node in self.nodes]} and area {np.round(self.Δ, 6)}.\n"
+        return f"Element {self.id} with nodes {[node.id for node in self.nodes]} and area {np.round(self.area, 6)}.\n"
 
     def set_charge_density(self, value: float):
-        self.ρ = float(value)
+        self.charge_density = float(value)
 
     def assign_nodes_to_element(self) -> None:
         # Note: force nodes in a counterclockwise indexation in the element
@@ -187,11 +182,11 @@ class Element:
                 raise TypeError(f'{_node} is not instance of {Node}')
             _node.assign_to_element(self)
 
-    def get_vertices(self) -> Tuple[float, float]:
+    def get_vertices(self) -> Tuple[List[int], List[int]]:
         """ Returns the coordinates of all nodes, with the first replicated """
-        x = [node.get_location()[0] for node in self.nodes];
+        x = [node.get_location()[0] for node in self.nodes]
         x.append(x[0])
-        y = [node.get_location()[1] for node in self.nodes];
+        y = [node.get_location()[1] for node in self.nodes]
         y.append(y[0])
         return x, y
 
@@ -203,8 +198,8 @@ class Element:
         """ Returns the (x,y) coordinates of the centroid of a triagle (mean of each axis' coordinates points) """
         x_coord = [node.get_location()[0] for node in self.nodes]
         y_coord = [node.get_location()[1] for node in self.nodes]
-        x_cent = mean(x_coord)
-        y_cent = mean(y_coord)
+        x_cent = float(mean(x_coord))
+        y_cent = float(mean(y_coord))
         return x_cent, y_cent
 
     def get_area(self) -> float:
@@ -213,7 +208,7 @@ class Element:
         y0, y1, y2 = [self.nodes[i].y for i in range(3)]
         return abs((x0 - x2) * (y1 - y0) - (x0 - x1) * (y2 - y0)) / 2
 
-    def get_elemental_matrix(self) -> Tuple[matrix, matrix]:
+    def get_elemental_matrix(self) -> Tuple[np.ndarray, np.ndarray]:
         """ Returns the elemental matrix
         Reference:
         Ida, Nathan. 'Engineering Electromagnetics', 3rd Ed. Springer Verlag
@@ -248,17 +243,20 @@ class Element:
         s33 = qk * qk + rk * rk
 
         # TODO OPTIMIZATION: remove redundant assignments and put them directly in the matrix
-        s = np.matrix([[s11, s12, s13],
-                       [s21, s22, s23],
-                       [s31, s32, s33]])
+        s = np.array([
+            [s11, s12, s13],
+            [s21, s22, s23],
+            [s31, s32, s33]
+        ])
 
-        q = self.ρ * self.Δ / 3 * matrix([1, 1, 1]).transpose()
+        q = self.charge_density * self.area / 3 * np.array([[1], [1], [1]])
         return s, q
 
     def local2global(self, local_index: int) -> int:
         """ Converts local index to global index
         :param local_index: int. Number 0, 1 or 2 (i, j, k) used to refer to the vertices of the element
-        :return global_index: int. Number 0:n used to refer to all the vertices of the whole domain, where n-1 is the total number of vertices (nodes).
+        :return global_index: int. Number 0:n used to refer to all the vertices of the whole domain,
+        where n-1 is the total number of vertices (nodes).
         """
         if local_index in [0, 1, 2]:
             global_index = self.nodes[local_index].id
@@ -268,7 +266,8 @@ class Element:
 
     def global2local(self, global_index: int) -> int:
         """ Converts global index to local index
-        :param global_index: int. Number 0:n used to refer to all the vertices of the whole domain, where n-1 is the total number of vertices (nodes).
+        :param global_index: int. Number 0:n used to refer to all the vertices of the whole domain,
+        where n-1 is the total number of vertices (nodes).
         :return local_index: int. Number 0, 1 or 2 that refers to the local vertex of the element
         """
         _node = Node.instances[global_index]
@@ -297,14 +296,14 @@ class Element:
         r[j] = x[i] - x[k]
         r[k] = x[j] - x[i]
 
-        partial_x = sum([q[l] * V[l] for l in [i, j, k]]) / (2 * self.get_area())
-        partial_y = sum([r[l] * V[l] for l in [i, j, k]]) / (2 * self.get_area())
+        partial_x = sum([q[l] * V[l] for l in [i, j, k]]) / (2 * self.area)
+        partial_y = sum([r[l] * V[l] for l in [i, j, k]]) / (2 * self.area)
 
         return -partial_x, -partial_y
 
 
-def plot_all_elements(show=False, numbering=True, fill=False):
-    """ Plots all instances of class Element """
+def global_plot_all_elements(show=False, numbering=True, fill=False):
+    """ Plots all instances of class Element defined in the global scope """
     if not Element.instances:
         print('Warning: no instance of Element found')
         return
@@ -317,10 +316,20 @@ def plot_all_elements(show=False, numbering=True, fill=False):
         if numbering:
             x, y = element.get_centroid()
             plt.text(x, y, s=str(element.id), c='k', ha='center', va='center')
-    if show: plt.show()
+    if show:
+        plt.show()
 
 
-def plot_contour_potential(levels=21, show=False, cmap='jet'):
+def global_plot_contour_potential(levels: int = 21, show: bool = False, cmap: str = 'jet'):
+    """
+    Plots the contour of the electric potential scalar field for nodes and elements defined in the global scope
+    :param levels: int. Number of contour levels
+    :param show: bool. Whether or not to show the plot (calls pyplot.show if True)
+    :param cmap: str. String representing the cmap argument (colormap) of pyplot.tricontour
+    :return: None
+    """
+    if levels < 2:
+        raise ValueError('Contour plot needs at least 2 levels to be correctly displayed')
     elements = Element.instances
     triangles = [element.get_triangle() for element in elements]
     nodes = Node.instances
@@ -328,50 +337,67 @@ def plot_contour_potential(levels=21, show=False, cmap='jet'):
     y = np.array([node.get_location()[1] for node in nodes])
     triangulation = tri.Triangulation(x, y, triangles)
     potentials = [node.potential for node in nodes]
-    plt.tricontourf(triangulation, potentials, levels=levels, cmap=cmap)
+    plt.tricontourf(triangulation, potentials, levels=levels-1, cmap=cmap)
     plt.colorbar()
     plt.title('Electric potential [V]')
-    plt.xlabel('x [m]');
+    plt.xlabel('x [m]')
     plt.ylabel('y [m]')
-    if show: plt.show()
+    if show:
+        plt.show()
 
 
-class FiniteElementsMethod:  # NOTE: only Electric Potential for now
-    def __init__(self, elements: List['Elements'] = [], nodes: List['Nodes'] = []):
-        self.elements = elements
-        self.nodes = nodes
-        self.S = np.matrix([])
-        self.V = np.matrix([])
-        self.Q = np.matrix([])
+class FiniteElementMethod:  # NOTE: only Electric Potential for now
+    def __init__(self, ):
+        self.mesh = None
+        self.elements = None
+        self.nodes = None
+        self.S = None
+        self.V = None
+        self.Q = None
         self.global_is_built = False
 
+    def set_elements(self, elements: List[Element]):
+        self.elements = elements
+
+    def set_nodes(self, nodes: List[Node]):
+        self.nodes = nodes
+
     def open_mesh(self, path: str) -> None:
-        """ Open msh mesh file. WARNING: this method overides attributes 'elements' and 'nodes'"""
+        """ Open msh mesh file. WARNING: this method overrides attributes 'elements' and 'nodes'"""
         import meshreader
         self.mesh = meshreader.MeshReader(path)
         self.nodes = self.mesh.generate_nodes()
         self.elements = self.mesh.generate_elements()
 
     def build_global_matrix(self):
-        """ Builds matrix equation SV=Q (a.k.a. AX=B). The geometry and BC define S(A) and Q(B), and we wish to solve for V(X)"""
+        """ Builds matrix equation SV=Q (a.k.a. AX=B). The geometry and BC define S(A) and Q(B),
+        and we wish to solve for V(X)"""
         self.S = np.zeros([len(self.nodes), len(self.nodes)])  # global elements matrix initialized
         self.Q = np.zeros(len(self.nodes))  # global bc matrix initialized
 
-        for element in self.elements:  # TODO: change reference from global instances to FEM object attribute 'self.elements'
+        for element in self.elements:
             s, q = element.get_elemental_matrix()
             for row in range(s.shape[0]):
                 global_row = element.local2global(row)
                 self.Q[global_row] += q[row]
                 for col in range(s.shape[1]):
                     global_col = element.local2global(col)
-                    # print(f'{element.id=}, {row=}, {col=}, {global_row=}, {global_col=}')
-
+                    # print(f'{element.id=}, {row=}, {col=}, {global_row=}, {global_col=}')  # for debugging
                     self.S[global_row, global_col] += s[row, col]
         self.global_is_built = True
         pass
 
-    def apply_bc(self, node_id_list: Union[List, int], value_list: Union[List[float], float]):
-        """ Apply boundary conditions """
+    def apply_bc(self,
+                 node_id_list: Union[List[int], int],
+                 value_list: Union[List[float], float]
+                 ):
+        """
+        Apply boundary conditions
+        :param node_id_list: int or list of ints.
+        :param value_list: float or list of floats.
+        If arguments are lists, they must have the same length
+        :return: None
+        """
         if not self.global_is_built:
             raise Warning('Global matrix must be built before applying boundary conditions!')
         if isinstance(node_id_list, (int, float)):
@@ -382,19 +408,25 @@ class FiniteElementsMethod:  # NOTE: only Electric Potential for now
         value_list = list(value_list)
         if len(value_list) != len(node_id_list):
             raise AttributeError(
-                f'Length mismatch: node_id_list has length {len(node_id_list)}, while value_list has length {len(value_list)}')
+                f'Length mismatch: node_id_list has length {len(node_id_list)}, '
+                f'while value_list has length {len(value_list)}')
 
-        for ibc in range(len(node_id_list)):
+        for ibc in range(len(node_id_list)):  # ibc is the local index of nodes to have boundary conditions applied
             node_id = node_id_list[ibc]
             value = value_list[ibc]
             assert node_id in range(len(self.nodes)), f'Node {node_id} is not in range({len(self.nodes)})'
-            N = 1e20  # a very large number
+            N = 1e20  # any very large number
             self.S[node_id, node_id] = N
             self.Q[node_id] = N * value
         pass
 
     def solve(self):
-        if self.S.any():
+        """ Solves the linear system S*V = Q
+        S: relates the relationships between the nodes
+        V: vector of potentials we wish to solve for
+        Q: like S, geometry dependent
+        """
+        if self.S is not None:
             self.V = np.linalg.solve(self.S, self.Q)
             for p in range(self.V.shape[0]):
                 self.nodes[p].potential = self.V[p]
@@ -402,20 +434,74 @@ class FiniteElementsMethod:  # NOTE: only Electric Potential for now
         else:
             raise ValueError('Matrices S(A) not yet built!')
 
+    def plot_all_nodes(self, markersize=25, show=False):
+        """ Plots all instances of class Node assigned to instance of FiniteElementMethod """
+        if not self.nodes:
+            print(f'Warning: no instance of Node assigned to {self}')
+            return
+        for node in self.nodes:
+            plt.plot(*node.get_location(), '.', markersize=markersize, c='k')
+            x, y = node.get_location()
+            plt.text(x, y, s=node.id, c='w', ha='center', va='center')
+        if show:
+            plt.show()
+
+    def plot_all_elements(self, show=False, numbering=True, fill=False):
+        """ Plots all instances of class Element assigned to instance of FiniteElementMethod """
+        if not self.elements:
+            print(f'Warning: no instance of Element assigned to {self}')
+            return
+        for element in self.elements:
+            plt.plot(*element.get_vertices(), c='black', linewidth=.1)
+            if fill:
+                plt.fill(*element.get_vertices(), color=element.material.color)
+                ...
+            if numbering:
+                x, y = element.get_centroid()
+                plt.text(x, y, s=str(element.id), c='k', ha='center', va='center')
+        if show:
+            plt.show()
+
+    def plot_contour_potential(self, levels: int = 21, show: bool = False, cmap: str = 'jet'):
+        """
+        Plots the contour of the electric potential scalar field for nodes and elements defined in the global scope
+        :param levels: int. Number of contour levels
+        :param show: bool. Whether or not to show the plot (calls pyplot.show if True)
+        :param cmap: str. String representing the cmap argument (colormap) of pyplot.tricontour
+        :return: None
+        """
+        if levels < 2:
+            raise ValueError('Contour plot needs at least 2 levels to be correctly displayed')
+        elements = self.elements
+        triangles = [element.get_triangle() for element in elements]
+        nodes = self.nodes
+        x = np.array([node.get_location()[0] for node in nodes])
+        y = np.array([node.get_location()[1] for node in nodes])
+        triangulation = tri.Triangulation(x, y, triangles)
+        potentials = [node.potential for node in nodes]
+        plt.tricontourf(triangulation, potentials, levels=levels-1, cmap=cmap)
+        plt.colorbar()
+        plt.title('Electric potential [V]')
+        plt.xlabel('x [m]')
+        plt.ylabel('y [m]')
+        if show:
+            plt.show()
+
     def plot_gradient(self, show=False):
         if self.V is not None:
             x, y = [], []
             Ex, Ey = [], []
             for element in self.elements:
                 x0, y0 = element.get_centroid()
-                x.append(x0);
+                x.append(x0)
                 y.append(y0)
 
                 ix, jy = element.get_E_field()
-                Ex.append(ix);
+                Ex.append(ix)
                 Ey.append(jy)
             plt.quiver(x, y, Ex, Ey)
-            if show: plt.show()
+            if show:
+                plt.show()
             pass
 
         else:
@@ -465,14 +551,17 @@ if __name__ == '__main__':
     n4.potential = 20
     n5.potential = 20
 
-    plot_contour_potential(21)
+    global_plot_contour_potential(21)
+    global_plot_all_nodes()
+    global_plot_all_elements()
 
-    plot_all_nodes()
-    plot_all_elements()
     plt.colorbar()
     plt.show()
 
-    # TEST class FiniteElementsMethod
-    fem = FiniteElementsMethod()
-    fem.open_mesh('meshes/semicircle.msh')
+    # TEST class FiniteElementMethod
+    fem = FiniteElementMethod()
+    fem.open_mesh('meshes/drilled_plate.msh')
+
+
+    plt.show()
     pass

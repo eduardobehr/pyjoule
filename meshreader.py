@@ -56,10 +56,9 @@ class MeshReader:
 
 if __name__ == '__main__':
     # TEST
-    mesh=MeshReader('meshes/semicircle.msh')
+    mesh=MeshReader('meshes/drilled_plate.msh')
     mesh.plot()
     nodes = mesh.generate_nodes()
     elements = mesh.generate_elements()
-    plot_all_nodes()
-    plot_all_elements()
+    # plot_all_elements()
     plt.show()
