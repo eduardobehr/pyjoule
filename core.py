@@ -6,7 +6,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import tri
-from numpy import sqrt, mean, ndarray, matrix
+from numpy import sqrt, mean, ndarray
 from typing import Tuple, List, Union
 
 
@@ -43,7 +43,7 @@ class Material:
     pass
 
 
-copper = Material('Copper', 1e7, 10, 1000, rgb=(1., 128 / 255, 0.))
+copper = Material('Copper', 5.96e7, 10, 1000, rgb=(1., 128 / 255, 0.))
 air = Material('Air', 1e-9, 1, 1, rgb=(206 / 255, 1., 1.))
 
 
@@ -121,6 +121,26 @@ class Node:
                 raise TypeError(f'{obj} is no instance of {self.__class__}')
             return False
 
+    def average_from_elements(self, element_attribute: str):
+        """
+         Returns the average value of given attributes of neighboring elements
+        :param element_attribute: str. Name of the attribute of Element instance.
+        :return: float
+        """
+        if not hasattr(Element.instances[0], element_attribute):
+            raise ValueError(f'Element has no attribute {element_attribute}')
+        values = []
+        for element in self.in_elements:
+            attr = element.__getattribute__(element_attribute)
+            if attr is None:
+                print(f'Warning: Element {element} has attribute {element_attribute} set to {None}.')
+
+            values.append(attr)
+        if not values:
+            print('Warning: Node is not part of any element. Returning None.')
+            return None
+        else:
+            return float(np.mean(values))
     pass
 
 
@@ -156,13 +176,14 @@ class Element:
             raise ValueError("An element must be triangular (exactly 3 nodes)")
         self.charge_density = charge_density  # volumetric charge density
         self.area = self.get_area()  # area of the element (triangular)
-
+        self.power_loss = 0
         self.assign_nodes_to_element()
         self.material = material
         self.instances.append(self)
         self.id = self.count
         self.id_dict.update({self.id: self.instances})
         self.inc()
+        self.E_abs = None  # absolute value of electric field
         pass
 
     def __repr__(self) -> str:
@@ -242,7 +263,6 @@ class Element:
         s32 = s23
         s33 = qk * qk + rk * rk
 
-        # TODO OPTIMIZATION: remove redundant assignments and put them directly in the matrix
         s = np.array([
             [s11, s12, s13],
             [s21, s22, s23],
@@ -355,8 +375,10 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         self.V = None  # electric potential
         self.Q = None
         self.global_is_built = False
-        self.P = None  # power losses per element # TODO
+        self.P = None  # power losses per element
         self.E = None  # electric field per element
+        self.triangulation = None
+        self.triangles = None
 
     def set_elements(self, elements: List[Element]):
         self.elements = elements
@@ -364,12 +386,15 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
     def set_nodes(self, nodes: List[Node]):
         self.nodes = nodes
 
-    def open_mesh(self, path: str) -> None:
+    def open_mesh(self, path: str, material=None) -> None:
         """ Open msh mesh file. WARNING: this method overrides attributes 'elements' and 'nodes'"""
+        if material is None:
+            print('Warning: no material assigned to domain. Defaulting to air')
+            material = air
         import meshreader
         self.mesh = meshreader.MeshReader(path)
         self.nodes = self.mesh.generate_nodes()
-        self.elements = self.mesh.generate_elements()
+        self.elements = self.mesh.generate_elements(material=material)
 
     def build_global_matrix(self):
         """ Builds matrix equation SV=Q (a.k.a. AX=B). The geometry and BC define S(A) and Q(B),
@@ -464,6 +489,13 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         if show:
             plt.show()
 
+    def triangulate(self):
+        if self.triangulation is None:
+            self.triangles = np.array([element.get_triangle() for element in self.elements])
+            x = np.array([node.get_location()[0] for node in self.nodes])
+            y = np.array([node.get_location()[1] for node in self.nodes])
+            self.triangulation = tri.Triangulation(x, y, self.triangles)
+
     def plot_contour_potential(self, levels: int = 21, show: bool = False, cmap: str = 'jet'):
         """
         Plots the contour of the electric potential scalar field for nodes and elements defined in the global scope
@@ -474,14 +506,10 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         """
         if levels < 2:
             raise ValueError('Contour plot needs at least 2 levels to be correctly displayed')
-        elements = self.elements
-        triangles = [element.get_triangle() for element in elements]
-        nodes = self.nodes
-        x = np.array([node.get_location()[0] for node in nodes])
-        y = np.array([node.get_location()[1] for node in nodes])
-        triangulation = tri.Triangulation(x, y, triangles)
-        potentials = [node.potential for node in nodes]
-        plt.tricontourf(triangulation, potentials, levels=levels-1, cmap=cmap)
+
+        self.triangulate()
+        potentials = [node.potential for node in self.nodes]
+        plt.tricontourf(self.triangulation, potentials, levels=levels-1, cmap=cmap)
         plt.colorbar()
         plt.title('Electric potential [V]')
         plt.xlabel('x [m]')
@@ -509,36 +537,40 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
                 ix, jy = element.get_E_field()
                 Ex.append(ix)
                 Ey.append(jy)
-
+                element.E_abs = sqrt(ix**2 + jy**2)
                 if _abs:
                     # node indexes that make up the element
                     triangles.append(element.get_triangle())
             self.E = Ex, Ey
 
             if _abs:
+                # Old way of plotting the flat scalar fields. Works, but looks ugly (not smoothed)
                 # nodes:
-                xp = np.array([node.get_location()[0] for node in self.nodes])
-                yp = np.array([node.get_location()[1] for node in self.nodes])
+                # xp = np.array([node.get_location()[0] for node in self.nodes])
+                # yp = np.array([node.get_location()[1] for node in self.nodes])
+                #
+                # absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
+                # self.triangulate()
+                # plt.tripcolor(xp, yp, facecolors=absE, triangles=triangles) # shading must be flat
 
-                absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
-                triangulation = tri.Triangulation(xp, yp, triangles)
-                if True:
-                    # Works, but looks ugly (not smoothed)
-                    plt.tripcolor(xp, yp, facecolors=absE, triangles=triangles) # shading must be flat
-                else:
-                    # TODO: a new triangulation is required here in order to interpolate absE:
-                    #  We already have a triangular mesh between the nodes
-                    #  However, here we need a triangulation of the centroids!
-                    #  The auto-generatad triangulation escapes the solution domain...
-                    triangulation = tri.Triangulation(x, y)
-                    x, y = np.array(x), np.array(y)
-                    xi, yi = np.meshgrid(np.linspace(0, .5, 2280), np.linspace(0, .5, 2280))  # Fixme: dimensions must be general
-                    z = tri.CubicTriInterpolator(triangulation, absE, kind='min_E')(x, y)
-                    plt.tricontourf(x, y, z)
+                # Smoothed by interpolating the nodes while averaging neighboring elements into the nodes
+
+                node_values = []
+                for node in self.nodes:
+                    node_values.append(node.average_from_elements('E_abs'))
+                self.triangulate()
+
+                ex = np.array([node.get_location()[0] for node in self.nodes])
+                ey = np.array([node.get_location()[1] for node in self.nodes])
+                z = tri.CubicTriInterpolator(self.triangulation, node_values, kind='min_E')(ex, ey)
+
+                plt.tricontourf(self.triangulation, z)
+
                 plt.colorbar()
 
             if vector:
                 plt.quiver(x, y, Ex, Ey)
+
             if show:
                 plt.title('Electric Field [V/m]')
                 plt.xlabel('x [m]')
@@ -554,7 +586,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         Computes self.P
         :param show: bool. If true, calls pyplot.show.
         :param depth: int or float. Depth of the extruded 2D domain.
-        :return: None
+        :return: float. Total power loss in the domain
         """
         if self.V is None:
             raise AttributeError('No solution has been found. Solve the problem first!')
@@ -564,22 +596,37 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         triangles = []
         for element in self.elements:
             Ex, Ey = element.get_E_field()
-
-            self.P.append(
-                depth * element.area * element.material.cond_elect * (Ex ** 2 + Ey ** 2)
-            )
+            power_loss = depth * element.area * element.material.cond_elect * (Ex ** 2 + Ey ** 2)
+            element.power_loss = power_loss
+            self.P.append(power_loss)
             triangles.append(element.get_triangle())
         self.P = np.array(self.P)
-        xp = np.array([node.get_location()[0] for node in self.nodes])
-        yp = np.array([node.get_location()[1] for node in self.nodes])
-        plt.tripcolor(xp, yp, facecolors=self.P, triangles=triangles)  # shading must be flat
+
+        # old way of plotting flat scalar field
+        # xp = np.array([node.get_location()[0] for node in self.nodes])
+        # yp = np.array([node.get_location()[1] for node in self.nodes])
+        # plt.tripcolor(xp, yp, facecolors=self.P, triangles=triangles)  # shading must be flat
+
+        node_values = []
+        for node in self.nodes:
+            node_values.append(node.average_from_elements('power_loss'))
+        self.triangulate()
+
+        x = np.array([node.get_location()[0] for node in self.nodes])
+        y = np.array([node.get_location()[1] for node in self.nodes])
+        z = tri.CubicTriInterpolator(self.triangulation, node_values, kind='min_E')(x, y)
+
+        plt.tricontourf(self.triangulation, z)
+
         plt.colorbar()
+        total_loss = sum(self.P)
         if show:
-            plt.title('Power losses [W]')
+            plt.title(f'Power losses [W]\n Total power loss in the domain: {total_loss:.3e} W')
             plt.xlabel('x [m]')
             plt.ylabel('y [m]')
             plt.show()
-        pass
+
+        return total_loss
 
 
 def track_mouse():  # TEST
@@ -628,7 +675,6 @@ if __name__ == '__main__':
     # TEST class FiniteElementMethod
     fem = FiniteElementMethod()
     fem.open_mesh('meshes/drilled_plate.msh')
-
 
     plt.show()
     pass

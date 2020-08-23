@@ -50,7 +50,7 @@ class MeshReader:
             nodes = []
             for node_id in triang:
                 nodes.append(Node.get_node(node_id))
-            self.elements.append(Element(nodes,material))
+            self.elements.append(Element(nodes, material))
         return self.elements
         
 
