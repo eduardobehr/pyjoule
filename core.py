@@ -278,7 +278,7 @@ class Element:
             raise ValueError(f'Node {_node.id} is not part of element {self.id}')
 
     def get_E_field(self):
-        """ Returns the negative of the gradient of the potential """
+        """ Returns the negative of the gradient of the potential at the element"""
         x, y = self.get_vertices()  # ignore last index, since it's equal to the first
         i, j, k = 0, 1, 2
         V = [None, None, None]
@@ -347,14 +347,16 @@ def global_plot_contour_potential(levels: int = 21, show: bool = False, cmap: st
 
 
 class FiniteElementMethod:  # NOTE: only Electric Potential for now
-    def __init__(self, ):
+    def __init__(self):
         self.mesh = None
         self.elements = None
         self.nodes = None
-        self.S = None
-        self.V = None
+        self.S = None  # global matrix
+        self.V = None  # electric potential
         self.Q = None
         self.global_is_built = False
+        self.P = None  # power losses per element # TODO
+        self.E = None  # electric field per element
 
     def set_elements(self, elements: List[Element]):
         self.elements = elements
@@ -487,10 +489,18 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         if show:
             plt.show()
 
-    def plot_gradient(self, show=False):
+    def compute_E_field(self, _abs: bool = True, vector: bool = True, show: bool = False):
+        """
+        Compute and plot the Electric vector field quiver, which is the negative gradient of the electric potential.
+        :param vector: bool. If True, plots the vector field quiver at each element.
+        :param _abs: bool. If True, plots the scalar field of the absolute value at each element.
+        :param show: bool. If True, calls pyplot.show at the end.
+        :return: None
+        """
         if self.V is not None:
-            x, y = [], []
-            Ex, Ey = [], []
+            x, y = [], []  # centroids
+            Ex, Ey = [], []  # orthogonal vector components
+            triangles = []
             for element in self.elements:
                 x0, y0 = element.get_centroid()
                 x.append(x0)
@@ -499,19 +509,76 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
                 ix, jy = element.get_E_field()
                 Ex.append(ix)
                 Ey.append(jy)
-            plt.quiver(x, y, Ex, Ey)
+
+                if _abs:
+                    # node indexes that make up the element
+                    triangles.append(element.get_triangle())
+            self.E = Ex, Ey
+
+            if _abs:
+                # nodes:
+                xp = np.array([node.get_location()[0] for node in self.nodes])
+                yp = np.array([node.get_location()[1] for node in self.nodes])
+
+                absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
+                triangulation = tri.Triangulation(xp, yp, triangles)
+                if True:
+                    # Works, but looks ugly (not smoothed)
+                    plt.tripcolor(xp, yp, facecolors=absE, triangles=triangles) # shading must be flat
+                else:
+                    # TODO: a new triangulation is required here in order to interpolate absE:
+                    #  We already have a triangular mesh between the nodes
+                    #  However, here we need a triangulation of the centroids!
+                    #  The auto-generatad triangulation escapes the solution domain...
+                    triangulation = tri.Triangulation(x, y)
+                    x, y = np.array(x), np.array(y)
+                    xi, yi = np.meshgrid(np.linspace(0, .5, 2280), np.linspace(0, .5, 2280))  # Fixme: dimensions must be general
+                    z = tri.CubicTriInterpolator(triangulation, absE, kind='min_E')(x, y)
+                    plt.tricontourf(x, y, z)
+                plt.colorbar()
+
+            if vector:
+                plt.quiver(x, y, Ex, Ey)
             if show:
+                plt.title('Electric Field [V/m]')
+                plt.xlabel('x [m]')
+                plt.ylabel('y [m]')
                 plt.show()
             pass
 
         else:
             raise AttributeError('No solution has been found. Solve the problem first!')
 
-    def plot(self):
-        if self.V:
-            ...
-        else:
+    def compute_powerlosses(self, depth: Union[int, float], show: bool = True):
+        """
+        Computes self.P
+        :param show: bool. If true, calls pyplot.show.
+        :param depth: int or float. Depth of the extruded 2D domain.
+        :return: None
+        """
+        if self.V is None:
             raise AttributeError('No solution has been found. Solve the problem first!')
+        if self.E is None:
+            raise AttributeError('The Electric Field E has not yet been calculated! Call compute_E_field first.')
+        self.P = []
+        triangles = []
+        for element in self.elements:
+            Ex, Ey = element.get_E_field()
+
+            self.P.append(
+                depth * element.area * element.material.cond_elect * (Ex ** 2 + Ey ** 2)
+            )
+            triangles.append(element.get_triangle())
+        self.P = np.array(self.P)
+        xp = np.array([node.get_location()[0] for node in self.nodes])
+        yp = np.array([node.get_location()[1] for node in self.nodes])
+        plt.tripcolor(xp, yp, facecolors=self.P, triangles=triangles)  # shading must be flat
+        plt.colorbar()
+        if show:
+            plt.title('Power losses [W]')
+            plt.xlabel('x [m]')
+            plt.ylabel('y [m]')
+            plt.show()
         pass
 
 
