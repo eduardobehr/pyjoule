@@ -21,7 +21,7 @@ fem.open_mesh('meshes/drilled_plate.msh', material=copper)
 
 fem.build_global_matrix()  
 
-fem.apply_bc([0,10,11,12,13,14,15,16,17,18,19,20,21], 13*[12])  # positive
+fem.apply_bc([0,10,11,12,13,14,15,16,17,18,19,20,21], 13*[1])  # positive
 fem.apply_bc([1,22,23,24,25,26,27,28,29,30,31,32,33], 13*[0])  # negative
 
 

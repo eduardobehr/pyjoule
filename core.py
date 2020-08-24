@@ -4,6 +4,7 @@
 #
 # Reference: Ida, Nathan. 'Engineering Electromagnetics', 3rd Ed. Springer Verlag
 import numpy as np
+import matplotlib.patches as mpatches
 from matplotlib import pyplot as plt
 from matplotlib import tri
 from numpy import sqrt, mean, ndarray
@@ -25,6 +26,7 @@ def global_plot_all_nodes(markersize=25, show=False):
 
 
 class Material:
+    instances = []
     def __init__(self, name: str, electrical_conductivity: float, thermal_conductivity: float, permittivity: float = 1,
                  rgb: Tuple[float, float, float] = (1, 1, 1)):
         self.name = name
@@ -34,6 +36,7 @@ class Material:
         if len(rgb) != 3:
             raise ValueError('Parameter rgb must be a tuple of length 3.')
         self.color = rgb
+        self.instances.append(self)
 
     def __repr__(self):
         return f"""{self.name}:
@@ -51,6 +54,13 @@ class Node:
     instances = []  # to keep track of all instances
     count = 0  # counts the instances
     id_dict = {}  # {obj:obj.id for obj in instances}
+    
+    @classmethod
+    def clear_instances(cls):
+        """ clears instances """
+        for i in range(len(cls.instances)-2):
+            del cls.instances[i]  # FIXME
+        cls.count = 0
 
     @classmethod
     def inc(cls):
@@ -89,6 +99,14 @@ class Node:
         if not isinstance(element, Element):
             raise TypeError(f'{element} is not {Element}')
         self.in_elements.append(element)
+        
+    def is_connected(self):
+        """ Detect if a node is not part of any element to help avoid singular matrices """
+        # ALERT TODO: find a way to exclude unconnected nodes from global matrix without messing up the index numbering!
+        if self.in_elements == []:
+            return False
+        else:
+            return True
 
     def __repr__(self):
         return f"\nNode {self.id} at {self.get_location()}. " \
@@ -136,9 +154,10 @@ class Node:
                 print(f'Warning: Element {element} has attribute {element_attribute} set to {None}.')
 
             values.append(attr)
-        if not values:
-            print('Warning: Node is not part of any element. Returning None.')
-            return None
+        # if not values:
+        if not self.is_connected():
+            print(f'Warning: Node {self.id} at {self.get_location()} is not part of any element. Returning 0.')
+            return 0
         else:
             return float(np.mean(values))
     pass
@@ -148,6 +167,13 @@ class Element:
     instances = []  # to keep track of all instances
     id_dict = {}  # {obj:obj.id for obj in instances}
     count = 0  # counts the instances
+    
+    @classmethod
+    def clear_instances(cls):
+        """ clears instances """
+        for i in range(len(cls.instances)-2):
+            del cls.instances[i]  # FIXME
+        cls.count = 0
 
     @classmethod
     def inc(cls):
@@ -184,6 +210,7 @@ class Element:
         self.id_dict.update({self.id: self.instances})
         self.inc()
         self.E_abs = None  # absolute value of electric field
+        
         pass
 
     def __repr__(self) -> str:
@@ -411,6 +438,15 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
                     global_col = element.local2global(col)
                     # print(f'{element.id=}, {row=}, {col=}, {global_row=}, {global_col=}')  # for debugging
                     self.S[global_row, global_col] += s[row, col]
+        
+        # correction for duplicate nodes, which were causing the matrix to be singular:
+        # force the self.S[n,n] = 1 for duplicated node with id n
+        # TODO
+        for i, node in enumerate(self.nodes):
+            if not node.is_connected():
+                n = node.id
+                self.S[n, n] = 1
+                
         self.global_is_built = True
         pass
 
@@ -459,7 +495,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
                 self.nodes[p].potential = self.V[p]
 
         else:
-            raise ValueError('Matrices S(A) not yet built!')
+            raise ValueError('Matrix S (a.k.a. A) not yet built!')
 
     def plot_all_nodes(self, markersize=25, show=False):
         """ Plots all instances of class Node assigned to instance of FiniteElementMethod """
@@ -473,21 +509,34 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         if show:
             plt.show()
 
-    def plot_all_elements(self, show=False, numbering=True, fill=False):
+    def plot_all_elements(self, show=False, numbering=False, fill=False):
         """ Plots all instances of class Element assigned to instance of FiniteElementMethod """
+        if fill:
+            legend_patches = []
+            for mat in Material.instances:
+                color = mat.color
+                color_name = mat.name
+                patch = mpatches.Patch(color=color, label=color_name)
+                legend_patches.append(patch)
+            plt.legend(handles=legend_patches)
+
         if not self.elements:
             print(f'Warning: no instance of Element assigned to {self}')
             return
         for element in self.elements:
             plt.plot(*element.get_vertices(), c='black', linewidth=.1)
             if fill:
-                plt.fill(*element.get_vertices(), color=element.material.color)
-                ...
+                color = element.material.color
+                color_name = element.material.name
+                plt.fill(*element.get_vertices(), color=color)
+
             if numbering:
                 x, y = element.get_centroid()
                 plt.text(x, y, s=str(element.id), c='k', ha='center', va='center')
         if show:
+            plt.title('Geometry and materials.')
             plt.show()
+
 
     def triangulate(self):
         if self.triangulation is None:
@@ -621,13 +670,19 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         plt.colorbar()
         total_loss = sum(self.P)
         if show:
-            plt.title(f'Power losses [W]\n Total power loss in the domain: {total_loss:.3e} W')
+            plt.title(f'Power losses [W] for geometry depth of {depth} m\n Total power loss in the domain: {total_loss:.3e} W')
             plt.xlabel('x [m]')
             plt.ylabel('y [m]')
             plt.show()
 
         return total_loss
+    
+    def clear(self):  # FIXME
+        """ Clears nodes and elements in global scope """
+        Node.clear_instances()
+        Element.clear_instances()
 
+    # TODO: add solver for temperature distribution!
 
 def track_mouse():  # TEST
     def mouse_move(event):
