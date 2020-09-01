@@ -29,25 +29,33 @@ class Material:
     instances = []
     def __init__(self, name: str, electrical_conductivity: float, thermal_conductivity: float, permittivity: float = 1,
                  rgb: Tuple[float, float, float] = (1, 1, 1)):
+        """
+        :param name: str.
+        :param electrical_conductivity: float.
+        :param thermal_conductivity: float.
+        :param permittivity: float.
+        :param rgb: Tuple[float, float, float]. Tuple with 3 rgb values ranging from 0.0 to 1.0.
+        """
         self.name = name
-        self.cond_elect = electrical_conductivity  # Siemens
-        self.cond_therm = thermal_conductivity
-        self.permittivity = permittivity
+        self.cond_elect = electrical_conductivity  # [S/m]
+        self.cond_therm = thermal_conductivity  # [W/(mK)]
+        self.permittivity = permittivity  # [F/m]
         if len(rgb) != 3:
             raise ValueError('Parameter rgb must be a tuple of length 3.')
-        self.color = rgb
+        self.color = rgb  # (0:1, 0:1, 0:1)
         self.instances.append(self)
 
     def __repr__(self):
         return f"""{self.name}:
         Electrical Conductivity: {self.cond_elect} [Siemens]
         Thermal Conductivity: {self.cond_therm} [UNIT]"""
-
     pass
 
 
-copper = Material('Copper', 5.96e7, 10, 1000, rgb=(1., 128 / 255, 0.))
-air = Material('Air', 1e-9, 1, 1, rgb=(206 / 255, 1., 1.))
+copper = Material('Copper', 5.96e7, 385, 1, rgb=(1., 128 / 255, 0.))
+air = Material('Air', 1e-9, 0.024, 1, rgb=(206 / 255, 1., 1.))
+iron = Material('Iron', 1e7, 79.5, 1, rgb=(.5, .5, .5))
+gold = Material('Gold', 4.11e7, 314, 1, rgb=(.9, .9, 0.))
 
 
 class Node:
@@ -156,7 +164,7 @@ class Node:
             values.append(attr)
         # if not values:
         if not self.is_connected():
-            print(f'Warning: Node {self.id} at {self.get_location()} is not part of any element. Returning 0.')
+            # print(f'Warning: Node {self.id} at {self.get_location()} is not part of any element. Returning 0.')
             return 0
         else:
             return float(np.mean(values))
@@ -203,6 +211,7 @@ class Element:
         self.charge_density = charge_density  # volumetric charge density
         self.area = self.get_area()  # area of the element (triangular)
         self.power_loss = 0
+        self.temperature = None
         self.assign_nodes_to_element()
         self.material = material
         self.instances.append(self)
@@ -210,6 +219,7 @@ class Element:
         self.id_dict.update({self.id: self.instances})
         self.inc()
         self.E_abs = None  # absolute value of electric field
+        self.neighbors = None
         
         pass
 
@@ -243,7 +253,7 @@ class Element:
         return [self.nodes[i].id for i in range(3)]
 
     def get_centroid(self) -> Tuple[float, float]:
-        """ Returns the (x,y) coordinates of the centroid of a triagle (mean of each axis' coordinates points) """
+        """ Returns the (x,y) coordinates of the centroid of a triangle (mean of each axis' coordinates points) """
         x_coord = [node.get_location()[0] for node in self.nodes]
         y_coord = [node.get_location()[1] for node in self.nodes]
         x_cent = float(mean(x_coord))
@@ -348,6 +358,35 @@ class Element:
 
         return -partial_x, -partial_y
 
+    def get_neighbors(self):
+        # TODO
+        if self.neighbors is None:
+            node0, node1, node2 = self.nodes
+            edges = ((node0, node1),
+                     (node1, node2),
+                     (node2, node0)
+            )
+            neighbors = []
+            for edge in edges:
+                ep0, ep1 = set(edge[0].in_elements), set(edge[1].in_elements)  # elements of point pair
+                intersec = ep0 & ep1  # gets the triangles that have these two vertices
+                if self not in intersec:  # self must be in intersect because both nodes belong to self
+                    raise Exception(f'Element {self.id} is not in {intersec} whilst it should be by definition')
+
+                intersec.remove(self)  # because self is not a neighbor of itself
+                if len(intersec) > 1:
+                    raise Exception(f'Nodes {edge[0]} and {edge[1]} have more than 2 elements in common.')
+
+                if len(intersec) == 1:
+                    neighbors.append(list(intersec)[0])
+                else:
+                    continue
+
+            if len(neighbors) > 3:
+                raise Exception(f'Element {self.id} has {len(neighbors)} neighbors'
+                                f' and this should not be possible for a triangle')
+            self.neighbors = neighbors
+        return self.neighbors
 
 def global_plot_all_elements(show=False, numbering=True, fill=False):
     """ Plots all instances of class Element defined in the global scope """
@@ -398,14 +437,17 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         self.mesh = None
         self.elements = None
         self.nodes = None
-        self.S = None  # global matrix
-        self.V = None  # electric potential
-        self.Q = None
+        self.S = None  # global matrix for electric potential
+        self.V = None  # electric potential matrix
+        self.Q = None  # boundary conditions matrix for electric potential
         self.global_is_built = False
-        self.P = None  # power losses per element
+        self.P = None  # power losses per element [W]
         self.E = None  # electric field per element
         self.triangulation = None
         self.triangles = None
+        self.A = None  # global matrix for heat transfer
+        self.T = None  # temperature matrix
+        self.B = None  # boundary conditions matrix for heat transfer
 
     def set_elements(self, elements: List[Element]):
         self.elements = elements
@@ -414,7 +456,9 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         self.nodes = nodes
 
     def open_mesh(self, path: str, material=None) -> None:
-        """ Open msh mesh file. WARNING: this method overrides attributes 'elements' and 'nodes'"""
+        """ Open msh mesh file. WARNING: this method overrides attributes 'elements' and 'nodes'
+        Then, call method build_potential_global_matrix
+        """
         if material is None:
             print('Warning: no material assigned to domain. Defaulting to air')
             material = air
@@ -423,9 +467,35 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         self.nodes = self.mesh.generate_nodes()
         self.elements = self.mesh.generate_elements(material=material)
 
-    def build_global_matrix(self):
-        """ Builds matrix equation SV=Q (a.k.a. AX=B). The geometry and BC define S(A) and Q(B),
+        self._build_potential_global_matrix()
+
+    def check_nodes(self):
+        """ Checks if self.nodes was loaded """
+        if self.nodes is None:
+            raise AttributeError(f'No nodes were assigned to the FEM problem. '
+                                 f'Call {self.open_mesh} to automatically load a mesh file (recommended)'
+                                 f'or {self.set_nodes} to manually load the nodes')
+        return True
+
+    def check_elements(self):
+        if self.nodes is None:
+            raise AttributeError(f'No elements were assigned to the FEM problem. '
+                                 f'Call {self.open_mesh} to automatically load a mesh file (recommended)'
+                                 f'or {self.set_elements} to manually load the elements')
+        return True
+
+    def _build_potential_global_matrix(self):
+        """ Builds matrix equation SV=Q (a.k.a. AX=B) for solving the electric potential distribuiton.
+        The geometry and BC define S(A) and Q(B),
         and we wish to solve for V(X)"""
+
+        if self.S is not None:
+            print('Warning: Global matrix was already built and is now being overridden.')
+        print('Bulding global matrix for electric potentials.')
+
+        self.check_nodes()
+        self.check_elements()
+
         self.S = np.zeros([len(self.nodes), len(self.nodes)])  # global elements matrix initialized
         self.Q = np.zeros(len(self.nodes))  # global bc matrix initialized
 
@@ -441,28 +511,30 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         
         # correction for duplicate nodes, which were causing the matrix to be singular:
         # force the self.S[n,n] = 1 for duplicated node with id n
-        # TODO
         for i, node in enumerate(self.nodes):
             if not node.is_connected():
                 n = node.id
                 self.S[n, n] = 1
+                print(f'Warning: Node {node.id} at {node.get_location()} is not connected. '
+                      f'Global matrix corrected at [{n}, {n}].')
                 
         self.global_is_built = True
         pass
 
-    def apply_bc(self,
-                 node_id_list: Union[List[int], int],
-                 value_list: Union[List[float], float]
-                 ):
+    def apply_dirichlet(self,
+                        node_id_list: Union[List[int], int],
+                        value_list: Union[List[float], float]
+                        ):
         """
-        Apply boundary conditions
+        Apply dirichlet boundary conditions for the voltages (electric potential) at given nodes.
         :param node_id_list: int or list of ints.
         :param value_list: float or list of floats.
         If arguments are lists, they must have the same length
         :return: None
         """
         if not self.global_is_built:
-            raise Warning('Global matrix must be built before applying boundary conditions!')
+            raise Warning(f'Global matrix must be built before applying boundary conditions! '
+                          f'First call {self._build_potential_global_matrix}.')
         if isinstance(node_id_list, (int, float)):
             node_id_list = [node_id_list]
         if isinstance(value_list, (int, float)):
@@ -483,11 +555,11 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
             self.Q[node_id] = N * value
         pass
 
-    def solve(self):
+    def solve_potential(self):
         """ Solves the linear system S*V = Q
         S: relates the relationships between the nodes
         V: vector of potentials we wish to solve for
-        Q: like S, geometry dependent
+        Q: depends on volumetric charge density per element
         """
         if self.S is not None:
             self.V = np.linalg.solve(self.S, self.Q)
@@ -536,7 +608,6 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         if show:
             plt.title('Geometry and materials.')
             plt.show()
-
 
     def triangulate(self):
         if self.triangulation is None:
@@ -628,7 +699,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
             pass
 
         else:
-            raise AttributeError('No solution has been found. Solve the problem first!')
+            raise AttributeError(f'No solution has been found. First call {self.solve_potential}.')
 
     def compute_powerlosses(self, depth: Union[int, float], show: bool = True):
         """
@@ -637,10 +708,11 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         :param depth: int or float. Depth of the extruded 2D domain.
         :return: float. Total power loss in the domain
         """
+        self.depth = depth
         if self.V is None:
-            raise AttributeError('No solution has been found. Solve the problem first!')
+            raise AttributeError(f'No solution for potential found. First call {self.solve_potential}.')
         if self.E is None:
-            raise AttributeError('The Electric Field E has not yet been calculated! Call compute_E_field first.')
+            raise AttributeError(f'The Electric Field E has not yet been calculated! First call {self.compute_E_field}.')
         self.P = []
         triangles = []
         for element in self.elements:
@@ -665,7 +737,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         y = np.array([node.get_location()[1] for node in self.nodes])
         z = tri.CubicTriInterpolator(self.triangulation, node_values, kind='min_E')(x, y)
 
-        plt.tricontourf(self.triangulation, z)
+        plt.tricontourf(self.triangulation, z, levels=20)
 
         plt.colorbar()
         total_loss = sum(self.P)
@@ -683,6 +755,164 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         Element.clear_instances()
 
     # TODO: add solver for temperature distribution!
+
+    """    
+    def build_potential_global_matrix(self):
+        ''' Builds matrix equation SV=Q (a.k.a. AX=B) for solving the electric potential distribuiton.
+        The geometry and BC define S(A) and Q(B),
+        and we wish to solve for V(X)'''
+
+    """
+
+    def _build_temperature_global_matrix(self, hbot, htop, Tamb):
+        '''
+        Builds matrix equation AT=B (a.k.a. AX=B) for solving the temperature distribution.
+        The geometry and BC define A and B, and we wish to solve for T
+        For each element, the equation is Pi - Pconv - Pcond = 0 (conservation of energy)
+        '''
+        # TODO: included outer boundaries heat flow. For now, only thin plates (depth) are valid  approximations
+        if self.P is None:
+            raise AttributeError(f'No power loss solution found. First call {self.compute_powerlosses}.')
+        # TODO: copy potential matrix procedures here
+        print('Bulding global matrix for temperature.')
+        self.A = np.zeros([len(self.elements), len(self.elements)])  # global elements matrix initialized
+        self.B = np.zeros(len(self.elements))  # global bc matrix initialized
+        # ###
+        for element in self.elements:
+            # s depends only on the geometry, which is the same as the electric potential problem
+            # s, _ = element.get_elemental_matrix()
+
+            # # q, however, depends on the power generation of the element, instead of charge density
+            # a = -self.P[element.id]/(element.material.cond_therm*self.depth*element.area)
+
+            # q = a / 3 * np.array([[1], [1], [1]])
+            # for row in range(s.shape[0]):
+            #     global_row = element.local2global(row)
+            #     for col in range(s.shape[1]):
+            #         global_col = element.local2global(col)
+            #         # print(f'{element.id=}, {row=}, {col=}, {global_row=}, {global_col=}')  # for debugging
+            #         self.A[global_row, global_col] += s[row, col]
+            row = element.id
+            R_conv = 1/(element.area*(hbot+htop))  # convection resistance [K/W]
+            Pi = element.power_loss
+            self.A[row, row] += 1/R_conv
+            self.B[row] = Pi + Tamb/R_conv
+
+            for neighbor in element.get_neighbors():
+                neighbor: Element
+                col = neighbor.id
+
+                diff = np.array(element.get_centroid()) - np.array(neighbor.get_centroid())
+                distance = np.sqrt(diff[0]**2 + diff[1]**2)
+
+                edge_nodes = tuple(set(element.nodes) & set(neighbor.nodes))
+                edge_length = edge_nodes[0].distance_to(edge_nodes[1])
+                # edge_length = np.sqrt(
+                #     (edge_nodes[0].x - edge_nodes[1].x) +
+                #     (edge_nodes[0].y - edge_nodes[1].y)
+                # )
+                sect_area = self.depth*edge_length  # depth * length of elements interface edge
+                R_cond = distance/(element.material.cond_therm * sect_area) # conduction resistance [K/W]
+                self.A[row, col] -= 1/R_cond
+                self.A[row, row] += 1/R_cond
+
+
+
+
+        # correction for duplicate nodes, which were causing the matrix to be singular:
+        # force the self.A[n,n] = 1 for duplicated node with id n
+        #for i, node in enumerate(self.nodes):
+            #if not node.is_connected():
+                #n = node.id
+                #self.A[n, n] = 1
+                #print(f'Warning: Node {node.id} at {node.get_location()} is not connected. '
+                      #f'Global matrix corrected at [{n}, {n}].')
+        # ###
+
+    def solve_temperature(self, hbot, htop, Tamb=293):
+        # TODO: read Temperature solver document
+        """
+        Computes the estimated temperature per element by applying conservation of energy:
+        Assuming steady-state where dT/dt=0, the energy produced must be equal to the energy escaping
+        T = Rth*P + T0
+        :param Tamb: float. Ambient temperature. Defaults to 293 K (20ºC)
+        :param hbot: float. Heat transfer coeff. [W/m²K] (conduction + convection) on the bottom (back) layer.
+        :param htop: float. Heat transfer coeff. [W/m²K] (conduction + convection) on the top (front) layer.
+        :return: None
+        """
+
+
+        """ Solves the linear system A*T = B
+        A: relates the relationships between the nodes (geometry)
+        T: vector of temperatures we wish to solve for
+        B: depends on heat output per element
+        :param T0: Union[float, int]. Initial temperature to override for every node
+        """
+        self.Tamb = Tamb
+        if self.A is None:
+            self._build_temperature_global_matrix(hbot, htop, Tamb)
+
+        self.T = np.linalg.solve(self.A, self.B)
+        for t in range(self.T.shape[0]):
+            if Tamb is not None:
+                self.elements[t].temperature = self.T[t]# + Tamb
+            else:
+                self.elements[t].temperature += self.T[t]
+
+        for node in self.nodes:
+            node.temperature = node.average_from_elements('temperature')
+
+
+        #
+        # # compute the equibibrium temperature (heating + convection):
+        # for i in range(len(self.elements)):
+        #     Rth = 1 / ( self.elements[i].area*(hbot + htop) )  # parallel thermal resistances [K/W]
+        #     T = Rth * self.P[i] + Tamb
+        #     self.elements[i].temperature = T
+        # # node_temps = []
+        # for node in self.nodes:
+        #     # node_temps.append(node.average_from_elements('temperature'))
+        #     node.temperature = node.average_from_elements('temperature')
+        #
+        # # compute heat diffusion:
+
+
+
+    def plot_contour_temperature(self, levels: int = 21, show: bool = True, cmap: str = 'turbo'):
+        """
+        Plots the contour of the temperature scalar field for nodes and elements defined in the FEM scope
+        :param levels: int. Number of contour levels
+        :param show: bool. Whether or not to show the plot (calls pyplot.show if True)
+        :param cmap: str. String representing the cmap argument (colormap) of pyplot.tricontour
+        :return: None
+        """
+        #if False: # plot based on the nodes averaged temperatures
+            #if levels < 2:
+                #raise ValueError('Contour plot needs at least 2 levels to be correctly displayed')
+            #self.triangulate()
+            #temperatures = [node.temperature for node in self.nodes]
+            #plt.tricontourf(self.triangulation, temperatures, levels=levels - 1, cmap=cmap)
+            
+            
+        #else:
+        xp = np.array([node.get_location()[0] for node in self.nodes])
+        yp = np.array([node.get_location()[1] for node in self.nodes])
+        
+        # absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
+        temp = np.array([e.temperature for e in self.elements])  # for each element
+        self.triangulate()
+        plt.tripcolor(xp, yp, facecolors=temp, triangles=self.triangles, cmap=cmap) # shading must be flat
+            
+        
+        plt.colorbar()
+        plt.title(f'Temperature [K]\nMax={round(max(temp),2)} K, '
+                  f'Min={round(min(temp),2)} K, '
+                  f'Avg={round(np.mean(temp),2)} K, '
+                  f'ΔTmax={round(max(temp)-self.Tamb,2)} K')
+        plt.xlabel('x [m]')
+        plt.ylabel('y [m]')
+        if show:
+                plt.show()
 
 def track_mouse():  # TEST
     def mouse_move(event):
@@ -712,6 +942,9 @@ if __name__ == '__main__':
     n6 = Node(0 + offset, 0 + offset)
     n7 = Node(1 + offset, 0 + offset)
     e3 = Element((n5, n6, n7), air)
+
+    # neighbors
+    print('Neighbors of Element 2:\n', e2.get_neighbors())
 
     n0.potential = 0
     n1.potential = 5
