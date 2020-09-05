@@ -11,9 +11,10 @@ if True:
         characteristic_length_min=0.001,  # minimal element edge length
         characteristic_length_max=0.01,  # maximal element edges length
     )
-    circ = geom.add_disk([0.5, 0.05, 0], 0.15)
+
     horiz_rect = geom.add_rectangle([0,0,0], 1, 0.1)  # horizontal rectangle
-    geom.boolean_union([circ, horiz_rect])
+    # circ = geom.add_disk([0.5, 0.05, 0], 0.15)
+    # geom.boolean_union([circ, horiz_rect])
 
     # generate and save the defined mesh
     mesh = pygmsh.generate_mesh(geom, msh_filename=mesh_path, dim=2)

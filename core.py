@@ -885,7 +885,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
 
 
 
-    def plot_contour_temperature(self, levels: int = 21, show: bool = True, cmap: str = 'turbo'):
+    def plot_contour_temperature(self, levels: int = 21, show: bool = True, cmap: str = 'turbo', min_is_Tamb=False):
         """
         Plots the contour of the temperature scalar field for nodes and elements defined in the FEM scope
         :param levels: int. Number of contour levels
@@ -895,13 +895,16 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         """
 
         temp = np.array([e.temperature for e in self.elements])  # for each element
-        vmin = self.Tamb
+        if min_is_Tamb:
+            vmin = self.Tamb
+        else:
+            vmin = None
         if False: # smooth plot based on the nodes averaged temperatures (approximated, but prettier)
             if levels < 2:
                 raise ValueError('Contour plot needs at least 2 levels to be correctly displayed')
             self.triangulate()
             temperatures = [node.temperature for node in self.nodes]
-            plt.tricontourf(self.triangulation, temperatures, levels=levels - 1, cmap=cmap)#, vmin=self.Tamb)
+            plt.tricontourf(self.triangulation, temperatures, levels=levels - 1, cmap=cmap, vmin=vmin)
             
             
         else: # rough plot based on the temperature computed on the elements (more accurate, but ugly)
@@ -911,7 +914,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
             # absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
 
             self.triangulate()
-            plt.tripcolor(xp, yp, facecolors=temp, triangles=self.triangles, cmap=cmap)#, vmin=self.Tamb) # shading must be flat
+            plt.tripcolor(xp, yp, facecolors=temp, triangles=self.triangles, cmap=cmap, vmin=vmin) # shading must be flat
             
         
         plt.colorbar()
