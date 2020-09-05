@@ -4,8 +4,8 @@ import pygmsh
 
 # create geometry object
 geom = pygmsh.opencascade.Geometry(
-  characteristic_length_min=0.001,  # mesh edges
-  characteristic_length_max=0.01,  # mesh edges
+  characteristic_length_min=0.001,  # minimal element edge length
+  characteristic_length_max=0.01,  # maximal element edges length
   )
 
 # BEGIN OF EDITABLE LINES --------------------------------------------------------------------

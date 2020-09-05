@@ -1,2 +1,5 @@
 # Project exclude paths
 /venv/
+/examples/cur_square_plate.msh
+/examples/simple_bar.msh
+/examples/simple_bar2.msh

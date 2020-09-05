@@ -11,7 +11,7 @@ from numpy import sqrt, mean, ndarray
 from typing import Tuple, List, Union
 
 
-def global_plot_all_nodes(markersize=25, show=False):
+def global_plot_all_nodes(markersize=26, show=False):
     """ Plots all instances of class Node defined in the global scope """
     if not Node.instances:
         print('Warning: no instance of Node found')
@@ -20,7 +20,7 @@ def global_plot_all_nodes(markersize=25, show=False):
         plt.plot(*node.get_location(), '.', markersize=markersize, c='k')
         x, y = node.get_location()
 
-        plt.text(x, y, s=node.id, c='w', ha='center', va='center')
+        plt.text(x, y, s=node.id, c='w', ha='center', va='center', fontsize=6)
     if show:
         plt.show()
 
@@ -569,7 +569,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         else:
             raise ValueError('Matrix S (a.k.a. A) not yet built!')
 
-    def plot_all_nodes(self, markersize=25, show=False):
+    def plot_all_nodes(self, markersize=26, show=False):
         """ Plots all instances of class Node assigned to instance of FiniteElementMethod """
         if not self.nodes:
             print(f'Warning: no instance of Node assigned to {self}')
@@ -577,7 +577,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         for node in self.nodes:
             plt.plot(*node.get_location(), '.', markersize=markersize, c='k')
             x, y = node.get_location()
-            plt.text(x, y, s=node.id, c='w', ha='center', va='center')
+            plt.text(x, y, s=node.id, c='w', ha='center', va='center', fontsize=6)
         if show:
             plt.show()
 
@@ -665,26 +665,27 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
 
             if _abs:
                 # Old way of plotting the flat scalar fields. Works, but looks ugly (not smoothed)
-                # nodes:
-                # xp = np.array([node.get_location()[0] for node in self.nodes])
-                # yp = np.array([node.get_location()[1] for node in self.nodes])
-                #
-                # absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
-                # self.triangulate()
-                # plt.tripcolor(xp, yp, facecolors=absE, triangles=triangles) # shading must be flat
+                if True:
+                    # nodes:
+                    xp = np.array([node.get_location()[0] for node in self.nodes])
+                    yp = np.array([node.get_location()[1] for node in self.nodes])
 
-                # Smoothed by interpolating the nodes while averaging neighboring elements into the nodes
+                    absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
+                    self.triangulate()
+                    plt.tripcolor(xp, yp, facecolors=absE, triangles=triangles) # shading must be flat
 
-                node_values = []
-                for node in self.nodes:
-                    node_values.append(node.average_from_elements('E_abs'))
-                self.triangulate()
+                    # Smoothed by interpolating the nodes while averaging neighboring elements into the nodes
+                else:
+                    node_values = []
+                    for node in self.nodes:
+                        node_values.append(node.average_from_elements('E_abs'))
+                    self.triangulate()
 
-                ex = np.array([node.get_location()[0] for node in self.nodes])
-                ey = np.array([node.get_location()[1] for node in self.nodes])
-                z = tri.CubicTriInterpolator(self.triangulation, node_values, kind='min_E')(ex, ey)
+                    ex = np.array([node.get_location()[0] for node in self.nodes])
+                    ey = np.array([node.get_location()[1] for node in self.nodes])
+                    z = tri.CubicTriInterpolator(self.triangulation, node_values, kind='min_E')(ex, ey)
 
-                plt.tricontourf(self.triangulation, z)
+                    plt.tricontourf(self.triangulation, z)
 
                 plt.colorbar()
 
@@ -737,7 +738,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         y = np.array([node.get_location()[1] for node in self.nodes])
         z = tri.CubicTriInterpolator(self.triangulation, node_values, kind='min_E')(x, y)
 
-        plt.tricontourf(self.triangulation, z, levels=20)
+        plt.tricontourf(self.triangulation, z, levels=10)
 
         plt.colorbar()
         total_loss = sum(self.P)
@@ -812,7 +813,12 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
                 #     (edge_nodes[0].y - edge_nodes[1].y)
                 # )
                 sect_area = self.depth*edge_length  # depth * length of elements interface edge
-                R_cond = distance/(element.material.cond_therm * sect_area) # conduction resistance [K/W]
+
+                # geometrical mean to account for boundary transition
+                # cond_term = sqrt(element.material.cond_therm * neighbor.material.cond_therm)
+                cond_term = element.material.cond_therm
+                R_cond = distance/(cond_term * sect_area) # conduction resistance [K/W]
+
                 self.A[row, col] -= 1/R_cond
                 self.A[row, row] += 1/R_cond
 
@@ -848,6 +854,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         B: depends on heat output per element
         :param T0: Union[float, int]. Initial temperature to override for every node
         """
+
         self.Tamb = Tamb
         if self.A is None:
             self._build_temperature_global_matrix(hbot, htop, Tamb)
@@ -886,22 +893,25 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         :param cmap: str. String representing the cmap argument (colormap) of pyplot.tricontour
         :return: None
         """
-        #if False: # plot based on the nodes averaged temperatures
-            #if levels < 2:
-                #raise ValueError('Contour plot needs at least 2 levels to be correctly displayed')
-            #self.triangulate()
-            #temperatures = [node.temperature for node in self.nodes]
-            #plt.tricontourf(self.triangulation, temperatures, levels=levels - 1, cmap=cmap)
-            
-            
-        #else:
-        xp = np.array([node.get_location()[0] for node in self.nodes])
-        yp = np.array([node.get_location()[1] for node in self.nodes])
-        
-        # absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
+
         temp = np.array([e.temperature for e in self.elements])  # for each element
-        self.triangulate()
-        plt.tripcolor(xp, yp, facecolors=temp, triangles=self.triangles, cmap=cmap) # shading must be flat
+        vmin = self.Tamb
+        if False: # smooth plot based on the nodes averaged temperatures (approximated, but prettier)
+            if levels < 2:
+                raise ValueError('Contour plot needs at least 2 levels to be correctly displayed')
+            self.triangulate()
+            temperatures = [node.temperature for node in self.nodes]
+            plt.tricontourf(self.triangulation, temperatures, levels=levels - 1, cmap=cmap)#, vmin=self.Tamb)
+            
+            
+        else: # rough plot based on the temperature computed on the elements (more accurate, but ugly)
+            xp = np.array([node.get_location()[0] for node in self.nodes])
+            yp = np.array([node.get_location()[1] for node in self.nodes])
+
+            # absE = np.sqrt(np.array(Ex)**2 + np.array(Ey)**2)  # for each element
+
+            self.triangulate()
+            plt.tripcolor(xp, yp, facecolors=temp, triangles=self.triangles, cmap=cmap)#, vmin=self.Tamb) # shading must be flat
             
         
         plt.colorbar()
@@ -913,6 +923,15 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
         plt.ylabel('y [m]')
         if show:
                 plt.show()
+
+    def compute_current(self, start_point: Tuple[float, float], end_point:Tuple[float, float]) -> float:  # TODO
+        """
+        Computes the current passing through a line segment defined by start_point and end_point.
+        :param start_point: (x0, y0).
+        :param end_point: (x1, y1).
+        :return: current
+        """
+        ...
 
 def track_mouse():  # TEST
     def mouse_move(event):
