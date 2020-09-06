@@ -8,12 +8,13 @@ mesh_path = 'cur_square_plate.msh'
 if True:
     # create geometry object
     geom = pygmsh.opencascade.Geometry(
-        characteristic_length_min=0.0002,  # minimal element edge length
-        characteristic_length_max=0.001,  # maximal element edges length
+        characteristic_length_min=0.00001,  # minimal element edge length
+        characteristic_length_max=0.003,  # maximal element edges length
     )
     cut_circ = geom.add_disk([0.1, 0.1, 0], 0.08)
-    drill_hole0 = geom.add_disk([0.09, 0.01, 0], 0.002)
-    drill_hole1 = geom.add_disk([0.01, 0.09, 0], 0.002)
+    drill_hole0 = geom.add_disk([0.09, 0.01, 0], 0.002, char_length=.001)
+    drill_hole1 = geom.add_disk([0.01, 0.09, 0], 0.002, char_length=.001)
+
     square = geom.add_rectangle([0, 0, 0], 0.1, 0.1)  # horizontal rectangle
     geom.boolean_difference([square], [cut_circ, drill_hole0, drill_hole1])
 
@@ -45,5 +46,5 @@ fem.plot_contour_potential(40, show=True)
 
 fem.compute_E_field(show=True, vector=True)
 fem.compute_powerlosses(depth=0.001)
-fem.solve_temperature(hbot=0, htop=10, Tamb=300)
+fem.solve_temperature(hbot=0, htop=5, Tamb=300)
 fem.plot_contour_temperature(show=True)

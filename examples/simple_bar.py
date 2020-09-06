@@ -9,7 +9,7 @@ if True:
     # create geometry object
     geom = pygmsh.opencascade.Geometry(
         characteristic_length_min=0.001,  # minimal element edge length
-        characteristic_length_max=0.01,  # maximal element edges length
+        characteristic_length_max=0.02,  # maximal element edges length
     )
 
     horiz_rect = geom.add_rectangle([0,0,0], 1, 0.1)  # horizontal rectangle
@@ -51,5 +51,5 @@ fem.plot_contour_potential(40, show=True)
 
 fem.compute_E_field(show=True, vector=True)
 fem.compute_powerlosses(depth=0.001)
-fem.solve_temperature(hbot=0, htop=10, Tamb=300)
+fem.solve_temperature(hbot=0, htop=5, Tamb=300)
 fem.plot_contour_temperature(show=True)

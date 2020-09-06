@@ -885,7 +885,7 @@ class FiniteElementMethod:  # NOTE: only Electric Potential for now
 
 
 
-    def plot_contour_temperature(self, levels: int = 21, show: bool = True, cmap: str = 'turbo', min_is_Tamb=False):
+    def plot_contour_temperature(self, levels: int = 20, show: bool = True, cmap: str = 'turbo', min_is_Tamb=False):
         """
         Plots the contour of the temperature scalar field for nodes and elements defined in the FEM scope
         :param levels: int. Number of contour levels
